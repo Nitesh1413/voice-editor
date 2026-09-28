@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>VoiceWrite — Mobile Voice Editor</title>
+
+<!-- Single HTML file: external libraries are loaded only when PDF import/export is used. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
+
+<style>
+  :root{
+    --bg:#0f1115;--panel:#171a21;--panel2:#1d222b;--line:#2a303a;
+    --text:#f4f6f8;--muted:#9da6b2;--accent:#7c5cff;--accent2:#9b86ff;
+    --danger:#ef4444;--paper:#fff;--paperText:#171717;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    height:100%;overflow:hidden}
+  button,input,select{font:inherit} button{border:0;color:var(--text);cursor:pointer}
+  .app{height:100dvh;display:flex;flex-direction:column}
+  .topbar{height:62px;display:flex;align-items:center;gap:9px;padding:8px 11px;
+    border-bottom:1px solid var(--line);background:rgba(15,17,21,.97);position:relative;z-index:10}
+  .brand{font-weight:800;font-size:16px;white-space:nowrap}.brand span{color:var(--accent2)}
+  .file-wrap{flex:1;min-width:0}.file-wrap input{width:100%;min-width:0;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;padding:10px 11px;color:var(--text);outline:none}
+  .icon-btn,.top-btn,.tool-btn{background:var(--panel);border:1px solid var(--line);
+    border-radius:11px;min-height:40px;padding:0 10px;display:inline-flex;align-items:center;justify-content:center}
+  .icon-btn{width:40px;padding:0}.top-btn.accent,.tool-btn.active{background:var(--accent);border-color:var(--accent)}
+  .lang-select{height:40px;max-width:108px;background:var(--panel);border:1px solid var(--line);border-radius:11px;color:var(--text);padding:0 8px;outline:none;font-size:12px}
+  .top-btn:active,.icon-btn:active,.tool-btn:active,.voice-fab:active{transform:scale(.97)}
+  .toolbar{min-height:54px;padding:7px 9px;display:flex;gap:7px;overflow-x:auto;
+    border-bottom:1px solid var(--line);background:#12151a;scrollbar-width:none}
+  .toolbar::-webkit-scrollbar{display:none}
+  .tool-btn{min-width:44px;height:40px;font-weight:700}
+  select.tool-select{height:40px;background:var(--panel);border:1px solid var(--line);
+    border-radius:11px;color:var(--text);padding:0 9px;min-width:118px}
+  .workspace{position:relative;flex:1;min-height:0;display:flex;justify-content:center;overflow:auto;padding:18px 12px 105px}
+  .page{width:min(100%,760px);min-height:calc(100dvh - 170px);background:var(--paper);color:var(--paperText);
+    border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.25);overflow:hidden}
+  #editor{min-height:calc(100dvh - 170px);padding:25px 20px 85px;outline:none;font-size:18px;
+    line-height:1.65;word-break:break-word;-webkit-user-select:text;user-select:text}
+  #editor:empty:before{content:"Start writing… Tap 🎙 to speak. Your work is saved automatically.";
+    color:#a6a6a6;pointer-events:none}
+  #editor h1{font-size:32px;line-height:1.2;margin:0 0 18px}
+  #editor h2{font-size:25px;line-height:1.25;margin:22px 0 12px}
+  #editor h3{font-size:21px;line-height:1.3;margin:18px 0 10px}
+  #editor p{margin:0 0 12px}
+  #editor ul,#editor ol{padding-left:28px}
+  #editor pre{background:#f1f3f5;border:1px solid #d8dde3;border-radius:10px;padding:14px;overflow:auto;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px;line-height:1.5}
+  #editor code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f1f3f5;
+    border-radius:5px;padding:1px 5px}
+  .status{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:rgba(24,28,34,.95);
+    border:1px solid var(--line);border-radius:999px;padding:8px 13px;font-size:12px;color:var(--muted);
+    white-space:nowrap;z-index:5}
+  .voice-fab{position:fixed;right:16px;bottom:73px;width:58px;height:58px;border-radius:50%;background:var(--accent);
+    box-shadow:0 10px 28px rgba(124,92,255,.35);font-size:24px;z-index:20;display:flex;align-items:center;
+    justify-content:center}.voice-fab.listening{background:var(--danger);box-shadow:0 10px 28px rgba(239,68,68,.35);animation:pulse 1.25s infinite}
+  @keyframes pulse{50%{transform:scale(1.08)}}
+  .bottom-bar{position:fixed;left:0;right:0;bottom:0;height:58px;background:rgba(15,17,21,.98);
+    border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-around;z-index:15;
+    padding-bottom:env(safe-area-inset-bottom)}
+  .bottom-bar button{background:transparent;color:#d8dce2;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:65px}
+  .bottom-bar .big{font-size:18px;line-height:1}
+  .toast{position:fixed;left:50%;bottom:128px;transform:translate(-50%,20px);background:#161a20;color:#fff;
+    padding:10px 14px;border:1px solid var(--line);border-radius:10px;opacity:0;pointer-events:none;
+    transition:.2s;z-index:50;font-size:13px;max-width:90vw;text-align:center}.toast.show{opacity:1;transform:translate(-50%,0)}
+  dialog{width:min(93vw,430px);border:1px solid var(--line);border-radius:16px;padding:0;background:var(--panel);
+    color:var(--text);box-shadow:0 24px 70px rgba(0,0,0,.45)}dialog::backdrop{background:rgba(0,0,0,.62)}
+  .dialog-inner{padding:18px}.dialog-title{font-size:18px;font-weight:800;margin-bottom:12px}
+  .file-list{max-height:45vh;overflow:auto;display:grid;gap:8px}
+  .file-item{width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);
+    border-radius:11px;padding:11px 12px}.file-item strong{display:block}.file-item small{color:var(--muted)}
+  .dialog-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}.dialog-actions button{
+    background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 13px}
+  .dialog-actions .primary{background:var(--accent);border-color:var(--accent)}
+  .pdf-options{display:grid;gap:9px}.pdf-option{background:var(--panel2);border:1px solid var(--line);border-radius:13px;
+    padding:13px;text-align:left}.pdf-option strong{display:block;margin-bottom:3px}.pdf-option small{color:var(--muted);line-height:1.35}
+  .pdf-option:disabled{opacity:.45;cursor:not-allowed}
+  .mini-note{margin-top:10px;color:var(--muted);font-size:11px;line-height:1.45}
+  .import-progress{display:none;margin-top:10px;color:var(--muted);font-size:12px}.import-progress.show{display:block}
+  input[type=file]{display:none}
+  @media(max-width:430px){.lang-select{max-width:92px;padding:0 5px;font-size:11px}.brand{font-size:14px}}
+  @media(min-width:700px){
+    .page{min-height:calc(100dvh - 170px)}#editor{padding:45px 55px 90px;font-size:19px}.voice-fab{bottom:82px;right:28px}
+  }
+  @media print{
+    @page{size:A4;margin:18mm}html,body{background:#fff!important;color:#000!important;overflow:visible!important}
+    .topbar,.toolbar,.bottom-bar,.voice-fab,.status,.toast{display:none!important}.workspace{padding:0!important;overflow:visible!important;display:block!important}
+    .page{box-shadow:none;border-radius:0;width:auto;min-height:auto}#editor{min-height:auto!important;padding:0!important;font-size:12pt;line-height:1.5}
+  }
+</style>
+</head>
+
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">Voice<span>Write</span></div>
+    <div class="file-wrap"><input id="fileName" value="Untitled" aria-label="File name"></div>
+    <select id="languageSelect" class="lang-select" aria-label="Writing language">
+      <option value="en">English</option>
+      <option value="hinglish">Hinglish</option>
+      <option value="hi">हिन्दी</option>
+    </select>
+    <button class="icon-btn" id="importBtn" title="Import PDF">📄</button>
+    <button class="icon-btn" id="filesBtn" title="Open files">☰</button>
+    <button class="top-btn accent" id="newBtn">＋ New</button>
+  </header>
+
+  <div class="toolbar">
+    <select id="blockType" class="tool-select" aria-label="Text style">
+      <option value="p">Paragraph</option><option value="h1">Heading 1</option>
+      <option value="h2">Heading 2</option><option value="h3">Heading 3</option>
+    </select>
+    <button class="tool-btn" data-cmd="bold" title="Bold">B</button>
+    <button class="tool-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+    <button class="tool-btn" id="ulBtn" title="Bullet list">• List</button>
+    <button class="tool-btn" id="olBtn" title="Numbered list">1. List</button>
+    <button class="tool-btn" id="codeBtn" title="Code block">{ }</button>
+    <button class="tool-btn" id="undoBtn" title="Undo">↶</button>
+    <button class="tool-btn" id="redoBtn" title="Redo">↷</button>
+  </div>
+
+  <main class="workspace">
+    <div class="page"><div id="editor" contenteditable="true" spellcheck="true" autocapitalize="sentences"></div></div>
+    <div class="status" id="status">Saved</div>
+  </main>
+
+  <button class="voice-fab" id="voiceBtn" title="Start voice typing" aria-label="Start voice typing">🎙️</button>
+
+  <nav class="bottom-bar">
+    <button id="saveBtn"><span class="big">✓</span><span>Save</span></button>
+    <button id="importBottomBtn"><span class="big">📄</span><span>PDF In</span></button>
+    <button id="pdfBtn"><span class="big">▣</span><span>PDF Out</span></button>
+    <button id="clearBtn"><span class="big">⌫</span><span>Clear</span></button>
+  </nav>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<dialog id="filesDialog">
+  <div class="dialog-inner">
+    <div class="dialog-title">Your files</div>
+    <div id="fileList" class="file-list"></div>
+    <div class="dialog-actions"><button id="closeFiles">Close</button></div>
+  </div>
+</dialog>
+
+<dialog id="pdfDialog">
+  <div class="dialog-inner">
+    <div class="dialog-title">Export PDF</div>
+    <div class="pdf-options">
+      <button class="pdf-option" id="downloadPdfBtn">
+        <strong>⬇️ Download new PDF</strong>
+        <small>Downloads the edited document using the current file name.</small>
+      </button>
+      <button class="pdf-option" id="replacePdfBtn">
+        <strong>♻️ Replace original PDF</strong>
+        <small id="replaceHelp">Writes the edited PDF back to the imported PDF when your browser allows direct file access.</small>
+      </button>
+    </div>
+    <div class="mini-note">
+      Tip: change the name in the top filename box before downloading when you want a separate copy.
+    </div>
+    <div class="import-progress" id="pdfProgress">Preparing PDF…</div>
+    <div class="dialog-actions"><button id="closePdf">Cancel</button></div>
+  </div>
+</dialog>
+
+<input id="pdfInput" type="file" accept="application/pdf,.pdf">
+
+<script>
+(() => {
+  const STORAGE_KEY="voicewrite_mobile_files_v2";
+  const CURRENT_KEY="voicewrite_mobile_current_v2";
+
+  const editor=document.getElementById("editor");
+  const fileNameInput=document.getElementById("fileName");
+  const languageSelect=document.getElementById("languageSelect");
+  const statusEl=document.getElementById("status");
+  const toastEl=document.getElementById("toast");
+  const voiceBtn=document.getElementById("voiceBtn");
+  const blockType=document.getElementById("blockType");
+  const filesDialog=document.getElementById("filesDialog");
+  const pdfDialog=document.getElementById("pdfDialog");
+  const fileListEl=document.getElementById("fileList");
+  const pdfInput=document.getElementById("pdfInput");
+  const pdfProgress=document.getElementById("pdfProgress");
+  const replacePdfBtn=document.getElementById("replacePdfBtn");
+  const replaceHelp=document.getElementById("replaceHelp");
+
+  let files={};
+  let currentId="";
+  let saveTimer=null;
+  let savedRange=null;
+  let recognition=null;
+  let isListening=false;
+
+  // File-system handle is intentionally kept only in memory for security.
+  // Import the PDF again after a full browser reload if you need direct replacement.
+  let sourcePdfHandle=null;
+  let sourcePdfFileName="";
+  let currentDocumentWasImportedPdf=false;
+  let currentLanguage="en";
+
+  const PDFJS_URL="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
+  const PDFJS_WORKER="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+  const JSPDF_URL="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+  const HTML2CANVAS_URL="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+
+  function uid(){return "f_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,7)}
+  function toast(message){toastEl.textContent=message;toastEl.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>toastEl.classList.remove("show"),1900)}
+  function status(message){statusEl.textContent=message}
+  function getJSON(key,fallback){try{return JSON.parse(localStorage.getItem(key))??fallback}catch{return fallback}}
+
+  function persist(){
+    try{localStorage.setItem(STORAGE_KEY,JSON.stringify(files));localStorage.setItem(CURRENT_KEY,currentId);status("Saved")}
+    catch{status("Save failed");toast("Browser storage is full or unavailable.")}
+  }
+  function scheduleSave(){status("Saving…");clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,350)}
+  function saveNow(){
+    clearTimeout(saveTimer);if(!currentId)return;
+    files[currentId]={id:currentId,name:fileNameInput.value.trim()||"Untitled",html:editor.innerHTML,updatedAt:Date.now(),pdfImported:currentDocumentWasImportedPdf,language:currentLanguage};
+    persist();
+  }
+  function makeNewFile(name="Untitled"){
+    saveNow();sourcePdfHandle=null;sourcePdfFileName="";currentDocumentWasImportedPdf=false;
+    currentId=uid();files[currentId]={id:currentId,name:name||"Untitled",html:"",updatedAt:Date.now(),pdfImported:false,language:currentLanguage};
+    editor.innerHTML="";fileNameInput.value=name||"Untitled";persist();placeCaretAtEnd();toast("New file created");
+  }
+  function openFile(id){
+    saveNow();const f=files[id];if(!f)return;
+    currentId=id;fileNameInput.value=f.name||"Untitled";editor.innerHTML=f.html||"";
+    currentLanguage=f.language||"en";languageSelect.value=currentLanguage;applyLanguageMode();
+    sourcePdfHandle=null;sourcePdfFileName="";currentDocumentWasImportedPdf=!!f.pdfImported;
+    persist();filesDialog.close();placeCaretAtEnd();toast("Opened "+(f.name||"file"));
+    updateReplaceState();
+  }
+  function renderFiles(){
+    const list=Object.values(files).sort((a,b)=>b.updatedAt-a.updatedAt);fileListEl.innerHTML="";
+    if(!list.length){fileListEl.innerHTML='<div style="color:#9da6b2">No files yet.</div>';return}
+    list.forEach(f=>{
+      const b=document.createElement("button");b.className="file-item";
+      b.innerHTML="<strong></strong><small></small>";b.querySelector("strong").textContent=f.name||"Untitled";
+      b.querySelector("small").textContent=new Date(f.updatedAt||Date.now()).toLocaleString();
+      b.addEventListener("click",()=>openFile(f.id));fileListEl.appendChild(b);
+    });
+  }
+  function init(){
+    files=getJSON(STORAGE_KEY,{});
+    currentId=localStorage.getItem(CURRENT_KEY)||"";
+    const ids=Object.keys(files);
+    if(currentId&&files[currentId]){
+      fileNameInput.value=files[currentId].name||"Untitled";editor.innerHTML=files[currentId].html||"";
+      currentLanguage=files[currentId].language||"en";languageSelect.value=currentLanguage;applyLanguageMode();
+      currentDocumentWasImportedPdf=!!files[currentId].pdfImported;
+    }else if(ids.length){
+      const f=Object.values(files).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+      currentId=f.id;fileNameInput.value=f.name||"Untitled";editor.innerHTML=f.html||"";
+      currentLanguage=f.language||"en";languageSelect.value=currentLanguage;applyLanguageMode();
+      currentDocumentWasImportedPdf=!!f.pdfImported;persist();
+    }else{
+      currentId=uid();files[currentId]={id:currentId,name:"Untitled",html:"",updatedAt:Date.now(),pdfImported:false,language:"en"};currentLanguage="en";languageSelect.value="en";applyLanguageMode();persist();
+    }
+    updateReplaceState();
+  }
+
+  function selectionInsideEditor(){
+    const sel=window.getSelection();if(!sel||!sel.rangeCount)return false;
+    return editor.contains(sel.getRangeAt(0).commonAncestorContainer);
+  }
+  function saveSelection(){
+    const sel=window.getSelection();
+    if(sel&&sel.rangeCount&&editor.contains(sel.anchorNode))savedRange=sel.getRangeAt(0).cloneRange();
+  }
+  function restoreSelection(){
+    if(!savedRange)return false;const sel=window.getSelection();sel.removeAllRanges();sel.addRange(savedRange);return true;
+  }
+  function placeCaretAtEnd(){
+    editor.focus();const r=document.createRange();r.selectNodeContents(editor);r.collapse(false);
+    const s=window.getSelection();s.removeAllRanges();s.addRange(r);savedRange=r.cloneRange();
+  }
+  function insertTextAtCursor(text){
+    if(!restoreSelection())placeCaretAtEnd();const sel=window.getSelection();const r=sel.getRangeAt(0);r.deleteContents();
+    const node=document.createTextNode(text);r.insertNode(node);r.setStartAfter(node);r.collapse(true);
+    sel.removeAllRanges();sel.addRange(r);savedRange=r.cloneRange();scheduleSave();
+  }
+  function exec(cmd,value=null){editor.focus();restoreSelection();document.execCommand(cmd,false,value);saveSelection();scheduleSave()}
+
+  document.querySelectorAll("[data-cmd]").forEach(btn=>btn.addEventListener("click",()=>exec(btn.dataset.cmd)));
+  blockType.addEventListener("change",()=>{editor.focus();restoreSelection();document.execCommand("formatBlock",false,blockType.value);saveSelection();scheduleSave()});
+  document.getElementById("ulBtn").addEventListener("click",()=>exec("insertUnorderedList"));
+  document.getElementById("olBtn").addEventListener("click",()=>exec("insertOrderedList"));
+  document.getElementById("undoBtn").addEventListener("click",()=>exec("undo"));
+  document.getElementById("redoBtn").addEventListener("click",()=>exec("redo"));
+  document.getElementById("codeBtn").addEventListener("click",()=>{editor.focus();restoreSelection();document.execCommand("formatBlock",false,"pre");saveSelection();scheduleSave()});
+
+  ["keyup","mouseup","touchend","focus"].forEach(evt=>editor.addEventListener(evt,()=>{if(selectionInsideEditor())saveSelection();detectBlockType()},{passive:true}));
+  function sanitizeForLanguage(text){
+    if(currentLanguage==="hi"){
+      // Hindi mode: block Roman alphabet letters; numbers and punctuation remain usable.
+      return text.replace(/[A-Za-z]/g, "");
+    }
+    // English + Hinglish: block Devanagari script so the selected Roman mode stays consistent.
+    return text.replace(/[\u0900-\u097F]/g, "");
+  }
+
+  // Prevent pasted/typed text from entering the wrong script for the selected mode.
+  editor.addEventListener("beforeinput", (e)=>{
+    if(e.inputType==="insertText" && typeof e.data==="string"){
+      const cleaned=sanitizeForLanguage(e.data);
+      if(cleaned!==e.data){
+        e.preventDefault();
+        insertTextAtCursor(cleaned);
+      }
+    }
+  });
+
+  editor.addEventListener("paste", (e)=>{
+    const text=e.clipboardData?.getData("text/plain");
+    if(typeof text==="string"){
+      const cleaned=sanitizeForLanguage(text);
+      if(cleaned!==text){
+        e.preventDefault();
+        insertTextAtCursor(cleaned);
+      }
+    }
+  });
+
+  editor.addEventListener("input",scheduleSave);
+
+  function detectBlockType(){
+    const sel=window.getSelection();if(!sel||!sel.rangeCount||!editor.contains(sel.anchorNode))return;
+    let el=sel.anchorNode.nodeType===3?sel.anchorNode.parentElement:sel.anchorNode;el=el.closest("p,h1,h2,h3,pre,div");
+    const tag=el?.tagName?.toLowerCase();if(["p","h1","h2","h3"].includes(tag))blockType.value=tag;
+  }
+
+  function languageLabel(){return currentLanguage==="hi"?"Hindi":currentLanguage==="hinglish"?"Hinglish":"English";}
+  function applyLanguageMode(){
+    editor.setAttribute("lang",currentLanguage==="hi"?"hi":"en-IN");
+    editor.setAttribute("inputmode","text");
+    editor.setAttribute("data-language",currentLanguage);
+    languageSelect.value=currentLanguage;
+    if(!isListening) status("Saved • "+languageLabel());
+  }
+  languageSelect.addEventListener("change",()=>{
+    if(isListening&&recognition){try{recognition.stop();}catch{}}
+    currentLanguage=languageSelect.value;
+    recognition=null;
+    scheduleSave();
+    applyLanguageMode();
+    toast("Writing language: "+languageLabel());
+  });
+
+  fileNameInput.addEventListener("input",scheduleSave);
+  fileNameInput.addEventListener("blur",()=>{if(!fileNameInput.value.trim())fileNameInput.value="Untitled";saveNow()});
+  fileNameInput.addEventListener("keydown",e=>{if(e.key==="Enter"){fileNameInput.blur();editor.focus()}});
+
+  document.getElementById("newBtn").addEventListener("click",()=>{
+    const name=prompt("New file name:","Untitled");if(name!==null)makeNewFile(name.trim()||"Untitled");
+  });
+  document.getElementById("filesBtn").addEventListener("click",()=>{saveNow();renderFiles();filesDialog.showModal()});
+  document.getElementById("closeFiles").addEventListener("click",()=>filesDialog.close());
+  document.getElementById("saveBtn").addEventListener("click",()=>{saveNow();toast("Saved")});
+  document.getElementById("clearBtn").addEventListener("click",()=>{
+    if(confirm("Clear this file? This removes its current content.")){editor.innerHTML="";scheduleSave();placeCaretAtEnd();toast("Cleared")}
+  });
+
+  function loadScript(src){
+    return new Promise((resolve,reject)=>{
+      const existing=[...document.scripts].find(s=>s.src===src);
+      if(existing){if(src.includes("jspdf")&&window.jspdf)resolve();else if(src.includes("html2canvas")&&window.html2canvas)resolve();else {existing.addEventListener("load",resolve,{once:true});existing.addEventListener("error",reject,{once:true})}return}
+      const s=document.createElement("script");s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error("Could not load "+src));document.head.appendChild(s);
+    });
+  }
+
+  let pdfJsPromise=null;
+  async function getPdfJs(){
+    if(window.pdfjsLib)return window.pdfjsLib;
+    if(pdfJsPromise)return pdfJsPromise;
+    pdfJsPromise=import(PDFJS_URL).then(mod=>{
+      const lib=mod.default||mod;
+      lib.GlobalWorkerOptions.workerSrc=PDFJS_WORKER;
+      window.pdfjsLib=lib;return lib;
+    });
+    return pdfJsPromise;
+  }
+  let pdfExportPromise=null;
+  async function getPdfExportLibs(){
+    if(window.jspdf?.jsPDF&&window.html2canvas)return {jsPDF:window.jspdf.jsPDF,html2canvas:window.html2canvas};
+    if(!pdfExportPromise){
+      pdfExportPromise=Promise.all([loadScript(JSPDF_URL),loadScript(HTML2CANVAS_URL)]).then(()=>({
+        jsPDF:window.jspdf.jsPDF,html2canvas:window.html2canvas
+      }));
+    }
+    return pdfExportPromise;
+  }
+
+  async function importPdfFile(file,handle=null){
+    if(!file||file.type!=="application/pdf"&&!file.name.toLowerCase().endsWith(".pdf")){toast("Please choose a PDF.");return}
+    pdfProgress.textContent="Reading PDF…";pdfProgress.classList.add("show");
+    try{
+      const pdfjs=await getPdfJs();const buf=await file.arrayBuffer();const pdf=await pdfjs.getDocument({data:buf}).promise;
+      let out="";
+      for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
+        pdfProgress.textContent=`Reading page ${pageNo} of ${pdf.numPages}…`;
+        const page=await pdf.getPage(pageNo);const content=await page.getTextContent();
+        const lines=[];let current="";
+        // PDF text items carry approximate x/y; a small y-change indicates a new line.
+        let lastY=null;
+        for(const item of content.items){
+          const str=(item.str||"").trim();if(!str)continue;
+          const y=item.transform?.[5]??0;
+          if(lastY!==null&&Math.abs(y-lastY)>5){if(current.trim())lines.push(current.trim());current=""}
+          current += (current && !current.endsWith(" ") ? " " : "") + str;lastY=y;
+        }
+        if(current.trim())lines.push(current.trim());
+        if(lines.length){
+          out+=`<h2>Page ${pageNo}</h2>`;
+          out+=lines.map(x=>`<p>${escapeHtml(x)}</p>`).join("");
+        }else out+=`<h2>Page ${pageNo}</h2><p></p>`;
+      }
+
+      saveNow();
+      currentId=uid();const base=file.name.replace(/\.pdf$/i,"")||"Imported PDF";
+      sourcePdfHandle=handle;sourcePdfFileName=file.name;currentDocumentWasImportedPdf=true;
+      files[currentId]={id:currentId,name:base,html:out,updatedAt:Date.now(),pdfImported:true,language:currentLanguage};
+      editor.innerHTML=out;fileNameInput.value=base;persist();placeCaretAtEnd();
+      updateReplaceState();toast(`Imported ${file.name}`);
+      pdfProgress.classList.remove("show");
+    }catch(err){
+      console.error(err);pdfProgress.classList.remove("show");toast("Could not read this PDF.");
+    }
+  }
+
+  function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
+
+  async function choosePdf(){
+    if(window.showOpenFilePicker){
+      try{
+        const [handle]=await window.showOpenFilePicker({
+          multiple:false,
+          excludeAcceptAllOption:true,
+          types:[{description:"PDF documents",accept:{"application/pdf":[".pdf"]}}]
+        });
+        const file=await handle.getFile();await importPdfFile(file,handle);return;
+      }catch(err){if(err?.name==="AbortError")return}
+    }
+    pdfInput.click();
+  }
+  pdfInput.addEventListener("change",async e=>{
+    const file=e.target.files?.[0];if(file)await importPdfFile(file,null);e.target.value="";
+  });
+  document.getElementById("importBtn").addEventListener("click",choosePdf);
+  document.getElementById("importBottomBtn").addEventListener("click",choosePdf);
+
+  function updateReplaceState(){
+    const possible=currentDocumentWasImportedPdf&&!!sourcePdfFileName;
+    replacePdfBtn.disabled=false;
+    replaceHelp.textContent=possible
+      ? `Original: ${sourcePdfFileName}. Direct replacement will be used when the browser provides file-write access; otherwise you will be asked where to save it.`
+      : "This document has no active imported-PDF file handle. Import a PDF first to use direct replacement.";
+  }
+
+  async function buildPdfBlob(){
+    const {jsPDF,html2canvas}=await getPdfExportLibs();
+    const clone=editor.cloneNode(true);
+    clone.removeAttribute("contenteditable");
+    clone.style.cssText="background:#fff;color:#111;width:720px;padding:0;font-size:16px;line-height:1.55;font-family:Arial,sans-serif;";
+    clone.querySelectorAll("h1").forEach(e=>{e.style.fontSize="30px";e.style.margin="0 0 14px";});
+    clone.querySelectorAll("h2").forEach(e=>{e.style.fontSize="22px";e.style.margin="20px 0 10px";});
+    clone.querySelectorAll("h3").forEach(e=>{e.style.fontSize="18px";e.style.margin="16px 0 8px";});
+    const wrap=document.createElement("div");
+    wrap.style.cssText="position:fixed;left:-100000px;top:0;background:#fff;width:720px;padding:0;";
+    wrap.appendChild(clone);document.body.appendChild(wrap);
+
+    const doc=new jsPDF({unit:"mm",format:"a4",orientation:"portrait"});
+    await doc.html(clone,{
+      x:14,y:14,width:182,windowWidth:720,
+      html2canvas:{scale:1.4,useCORS:false,backgroundColor:"#ffffff"},
+      autoPaging:"text",
+      margin:[14,14,14,14]
+    });
+    document.body.removeChild(wrap);
+    return {blob:doc.output("blob"),doc};
+  }
+
+  async function downloadBlob(blob,name){
+    const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=name;a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+  }
+
+  async function replaceOriginalPdf(){
+    const clean=(fileNameInput.value.trim()||sourcePdfFileName.replace(/\.pdf$/i,"")||"Untitled").replace(/\.pdf$/i,"")+".pdf";
+    pdfProgress.textContent="Building edited PDF…";pdfProgress.classList.add("show");
+    try{
+      const {blob}=await buildPdfBlob();
+
+      // Best path: the handle obtained when the original PDF was imported.
+      if(sourcePdfHandle&&sourcePdfHandle.createWritable){
+        if(sourcePdfHandle.queryPermission){
+          const q=await sourcePdfHandle.queryPermission({mode:"readwrite"});
+          if(q!=="granted"&&sourcePdfHandle.requestPermission){
+            const r=await sourcePdfHandle.requestPermission({mode:"readwrite"});
+            if(r!=="granted")throw new Error("Write permission was not granted.");
+          }
+        }
+        const writable=await sourcePdfHandle.createWritable();await writable.write(blob);await writable.close();
+        toast("Original PDF replaced successfully");pdfProgress.classList.remove("show");pdfDialog.close();return;
+      }
+
+      // Fallback: ask the browser for a writable target. Suggested name is the current filename.
+      if(window.showSaveFilePicker){
+        const handle=await window.showSaveFilePicker({
+          suggestedName:clean,
+          types:[{description:"PDF document",accept:{"application/pdf":[".pdf"]}}]
+        });
+        const writable=await handle.createWritable();await writable.write(blob);await writable.close();
+        toast("PDF saved to the selected file");pdfProgress.classList.remove("show");pdfDialog.close();return;
+      }
+
+      // Last-resort browser download. The browser may append (1) if a same-name file exists.
+      await downloadBlob(blob,clean);
+      toast("Downloaded. This browser cannot overwrite local files directly.");
+      pdfProgress.classList.remove("show");pdfDialog.close();
+    }catch(err){
+      console.error(err);pdfProgress.classList.remove("show");
+      if(err?.name==="AbortError"){toast("Save cancelled.");return}
+      toast("Could not replace the PDF.");
+    }
+  }
+
+  async function downloadNewPdf(){
+    const clean=(fileNameInput.value.trim()||"Untitled").replace(/\.pdf$/i,"")+".pdf";
+    pdfProgress.textContent="Building PDF…";pdfProgress.classList.add("show");
+    try{const {blob}=await buildPdfBlob();await downloadBlob(blob,clean);toast("PDF downloaded");pdfProgress.classList.remove("show");pdfDialog.close()}
+    catch(err){console.error(err);pdfProgress.classList.remove("show");toast("Could not create the PDF.")}
+  }
+
+  document.getElementById("pdfBtn").addEventListener("click",()=>{
+    saveNow();updateReplaceState();pdfDialog.showModal();
+  });
+  document.getElementById("downloadPdfBtn").addEventListener("click",downloadNewPdf);
+  replacePdfBtn.addEventListener("click",replaceOriginalPdf);
+  document.getElementById("closePdf").addEventListener("click",()=>pdfDialog.close());
+
+  // Voice typing
+  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  function initRecognition(){
+    if(!SpeechRecognition){toast("Use Chrome on Android for voice typing.");return false}
+    recognition=new SpeechRecognition();recognition.continuous=true;recognition.interimResults=true;recognition.lang=currentLanguage==="hi"?"hi-IN":"en-IN";
+    recognition.onstart=()=>{isListening=true;voiceBtn.classList.add("listening");voiceBtn.textContent="⏹️";status("Listening…")};
+    recognition.onresult=event=>{
+      for(let i=event.resultIndex;i<event.results.length;i++){
+        const result=event.results[i];if(!result.isFinal)continue;let text=result[0].transcript.trim();if(!text)continue;
+        text=text.replace(/\bnew paragraph\b/gi,"\n\n").replace(/\bfull stop\b/gi,".").replace(/\bquestion mark\b/gi,"?")
+          .replace(/\bcomma\b/gi,",").replace(/\bcolon\b/gi,":");
+        text=sanitizeForLanguage(text);
+        if(currentLanguage==="hinglish") text=text.replace(/\s{2,}/g," ").trim();
+        const lead=/^[\n.,?:]/.test(text)?"":text==="."||text===","||text==="?"||text===":"?"":" ";
+        insertTextAtCursor(text.startsWith("\n")||/^[.,?:]/.test(text)?text:text+" ");
+      }
+    };
+    recognition.onerror=e=>{if(e.error==="not-allowed"||e.error==="service-not-allowed")toast("Allow microphone access in Chrome.");else if(e.error!=="aborted")toast("Voice error: "+e.error)};
+    recognition.onend=()=>{isListening=false;voiceBtn.classList.remove("listening");voiceBtn.textContent="🎙️";if(statusEl.textContent==="Listening…")status("Saved")};
+    return true;
+  }
+  voiceBtn.addEventListener("click",()=>{
+    if(!SpeechRecognition){toast("Voice typing needs Chrome's speech recognition.");return}
+    if(!recognition&&!initRecognition())return;
+    if(isListening){recognition.stop();saveNow();return}
+    if(recognition){try{recognition.stop();}catch{}recognition=null;}
+    if(!initRecognition())return;
+    saveSelection();if(!savedRange)placeCaretAtEnd();
+    try{recognition.start()}catch{try{recognition.stop()}catch{}setTimeout(()=>{try{recognition.start()}catch{toast("Could not start voice typing.")}},150)}
+  });
+
+  document.addEventListener("selectionchange",()=>{if(selectionInsideEditor())saveSelection()});
+  window.addEventListener("beforeunload",saveNow);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")saveNow()});
+
+  init();
+  applyLanguageMode();
+})();
+</script>
+</body>
+</html>
