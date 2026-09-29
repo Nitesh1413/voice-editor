@@ -56,6 +56,11 @@
   .status{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:rgba(24,28,34,.95);
     border:1px solid var(--line);border-radius:999px;padding:8px 13px;font-size:12px;color:var(--muted);
     white-space:nowrap;z-index:5}
+  .voice-anchor{
+    display:inline-block;width:0;height:1px;padding:0;margin:0;
+    overflow:hidden;vertical-align:baseline;pointer-events:none;
+  }
+  .voice-anchor::after{content:"";}
   .voice-fab{position:fixed;right:16px;bottom:73px;width:58px;height:58px;border-radius:50%;background:var(--accent);
     box-shadow:0 10px 28px rgba(124,92,255,.35);font-size:24px;z-index:20;display:flex;align-items:center;
     justify-content:center}.voice-fab.listening{background:var(--danger);box-shadow:0 10px 28px rgba(239,68,68,.35);animation:pulse 1.25s infinite}
@@ -65,6 +70,10 @@
     padding-bottom:env(safe-area-inset-bottom)}
   .bottom-bar button{background:transparent;color:#d8dce2;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:65px}
   .bottom-bar .big{font-size:18px;line-height:1}
+
+  .voice-hint{position:fixed;right:22px;bottom:136px;z-index:19;background:rgba(24,28,34,.94);
+    border:1px solid var(--line);border-radius:999px;padding:6px 9px;color:#d8dce2;font-size:10px;
+    pointer-events:none;opacity:.82}
   .toast{position:fixed;left:50%;bottom:128px;transform:translate(-50%,20px);background:#161a20;color:#fff;
     padding:10px 14px;border:1px solid var(--line);border-radius:10px;opacity:0;pointer-events:none;
     transition:.2s;z-index:50;font-size:13px;max-width:90vw;text-align:center}.toast.show{opacity:1;transform:translate(-50%,0)}
@@ -129,6 +138,7 @@
     <div class="status" id="status">Saved</div>
   </main>
 
+  <div class="voice-hint">Tap mic → speak</div>
   <button class="voice-fab" id="voiceBtn" title="Start voice typing" aria-label="Start voice typing">🎙️</button>
 
   <nav class="bottom-bar">
@@ -205,6 +215,9 @@
   let sourcePdfFileName="";
   let currentDocumentWasImportedPdf=false;
   let currentLanguage="en";
+  let voiceAnchor=null;
+  let voiceTextOffset=0;
+
 
   const PDFJS_URL="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
   const PDFJS_WORKER="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
@@ -223,7 +236,15 @@
   function scheduleSave(){status("Saving…");clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,350)}
   function saveNow(){
     clearTimeout(saveTimer);if(!currentId)return;
-    files[currentId]={id:currentId,name:fileNameInput.value.trim()||"Untitled",html:editor.innerHTML,updatedAt:Date.now(),pdfImported:currentDocumentWasImportedPdf,language:currentLanguage};
+    files[currentId]={
+      id:currentId,
+      name:fileNameInput.value.trim()||"Untitled",
+      html:serializeEditor(),
+      updatedAt:Date.now(),
+      pdfImported:currentDocumentWasImportedPdf,
+      language:currentLanguage,
+      voiceOffset:voiceTextOffset
+    };
     persist();
   }
   function makeNewFile(name="Untitled"){
@@ -268,323 +289,127 @@
     updateReplaceState();
   }
 
-  function selectionInsideEditor(){
-    const sel=window.getSelection();if(!sel||!sel.rangeCount)return false;
-    return editor.contains(sel.getRangeAt(0).commonAncestorContainer);
-  }
-  function saveSelection(){
-    const sel=window.getSelection();
-    if(sel&&sel.rangeCount&&editor.contains(sel.anchorNode))savedRange=sel.getRangeAt(0).cloneRange();
-  }
-  function restoreSelection(){
-    if(!savedRange)return false;const sel=window.getSelection();sel.removeAllRanges();sel.addRange(savedRange);return true;
-  }
-  function placeCaretAtEnd(){
-    editor.focus();const r=document.createRange();r.selectNodeContents(editor);r.collapse(false);
-    const s=window.getSelection();s.removeAllRanges();s.addRange(r);savedRange=r.cloneRange();
-  }
-  function insertTextAtCursor(text){
-    if(!restoreSelection())placeCaretAtEnd();const sel=window.getSelection();const r=sel.getRangeAt(0);r.deleteContents();
-    const node=document.createTextNode(text);r.insertNode(node);r.setStartAfter(node);r.collapse(true);
-    sel.removeAllRanges();sel.addRange(r);savedRange=r.cloneRange();scheduleSave();
-  }
-  function exec(cmd,value=null){editor.focus();restoreSelection();document.execCommand(cmd,false,value);saveSelection();scheduleSave()}
 
-  document.querySelectorAll("[data-cmd]").forEach(btn=>btn.addEventListener("click",()=>exec(btn.dataset.cmd)));
-  blockType.addEventListener("change",()=>{editor.focus();restoreSelection();document.execCommand("formatBlock",false,blockType.value);saveSelection();scheduleSave()});
-  document.getElementById("ulBtn").addEventListener("click",()=>exec("insertUnorderedList"));
-  document.getElementById("olBtn").addEventListener("click",()=>exec("insertOrderedList"));
-  document.getElementById("undoBtn").addEventListener("click",()=>exec("undo"));
-  document.getElementById("redoBtn").addEventListener("click",()=>exec("redo"));
-  document.getElementById("codeBtn").addEventListener("click",()=>{editor.focus();restoreSelection();document.execCommand("formatBlock",false,"pre");saveSelection();scheduleSave()});
-
-  ["keyup","mouseup","touchend","focus"].forEach(evt=>editor.addEventListener(evt,()=>{if(selectionInsideEditor())saveSelection();detectBlockType()},{passive:true}));
-  function sanitizeForLanguage(text){
-    if(currentLanguage==="hi"){
-      // Hindi mode: block Roman alphabet letters; numbers and punctuation remain usable.
-      return text.replace(/[A-Za-z]/g, "");
-    }
-    // English + Hinglish: block Devanagari script so the selected Roman mode stays consistent.
-    return text.replace(/[\u0900-\u097F]/g, "");
-  }
-
-  // Prevent pasted/typed text from entering the wrong script for the selected mode.
-  editor.addEventListener("beforeinput", (e)=>{
-    if(e.inputType==="insertText" && typeof e.data==="string"){
-      const cleaned=sanitizeForLanguage(e.data);
-      if(cleaned!==e.data){
-        e.preventDefault();
-        insertTextAtCursor(cleaned);
-      }
-    }
-  });
-
-  editor.addEventListener("paste", (e)=>{
-    const text=e.clipboardData?.getData("text/plain");
-    if(typeof text==="string"){
-      const cleaned=sanitizeForLanguage(text);
-      if(cleaned!==text){
-        e.preventDefault();
-        insertTextAtCursor(cleaned);
-      }
-    }
-  });
-
-  editor.addEventListener("input",scheduleSave);
-
-  function detectBlockType(){
-    const sel=window.getSelection();if(!sel||!sel.rangeCount||!editor.contains(sel.anchorNode))return;
-    let el=sel.anchorNode.nodeType===3?sel.anchorNode.parentElement:sel.anchorNode;el=el.closest("p,h1,h2,h3,pre,div");
-    const tag=el?.tagName?.toLowerCase();if(["p","h1","h2","h3"].includes(tag))blockType.value=tag;
-  }
-
-  function languageLabel(){return currentLanguage==="hi"?"Hindi":currentLanguage==="hinglish"?"Hinglish":"English";}
-  function applyLanguageMode(){
-    editor.setAttribute("lang",currentLanguage==="hi"?"hi":"en-IN");
-    editor.setAttribute("inputmode","text");
-    editor.setAttribute("data-language",currentLanguage);
-    languageSelect.value=currentLanguage;
-    if(!isListening) status("Saved • "+languageLabel());
-  }
-  languageSelect.addEventListener("change",()=>{
-    if(isListening&&recognition){try{recognition.stop();}catch{}}
-    currentLanguage=languageSelect.value;
-    recognition=null;
-    scheduleSave();
-    applyLanguageMode();
-    toast("Writing language: "+languageLabel());
-  });
-
-  fileNameInput.addEventListener("input",scheduleSave);
-  fileNameInput.addEventListener("blur",()=>{if(!fileNameInput.value.trim())fileNameInput.value="Untitled";saveNow()});
-  fileNameInput.addEventListener("keydown",e=>{if(e.key==="Enter"){fileNameInput.blur();editor.focus()}});
-
-  document.getElementById("newBtn").addEventListener("click",()=>{
-    const name=prompt("New file name:","Untitled");if(name!==null)makeNewFile(name.trim()||"Untitled");
-  });
-  document.getElementById("filesBtn").addEventListener("click",()=>{saveNow();renderFiles();filesDialog.showModal()});
-  document.getElementById("closeFiles").addEventListener("click",()=>filesDialog.close());
-  document.getElementById("saveBtn").addEventListener("click",()=>{saveNow();toast("Saved")});
-  document.getElementById("clearBtn").addEventListener("click",()=>{
-    if(confirm("Clear this file? This removes its current content.")){editor.innerHTML="";scheduleSave();placeCaretAtEnd();toast("Cleared")}
-  });
-
-  function loadScript(src){
-    return new Promise((resolve,reject)=>{
-      const existing=[...document.scripts].find(s=>s.src===src);
-      if(existing){if(src.includes("jspdf")&&window.jspdf)resolve();else if(src.includes("html2canvas")&&window.html2canvas)resolve();else {existing.addEventListener("load",resolve,{once:true});existing.addEventListener("error",reject,{once:true})}return}
-      const s=document.createElement("script");s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error("Could not load "+src));document.head.appendChild(s);
-    });
-  }
-
-  let pdfJsPromise=null;
-  async function getPdfJs(){
-    if(window.pdfjsLib)return window.pdfjsLib;
-    if(pdfJsPromise)return pdfJsPromise;
-    pdfJsPromise=import(PDFJS_URL).then(mod=>{
-      const lib=mod.default||mod;
-      lib.GlobalWorkerOptions.workerSrc=PDFJS_WORKER;
-      window.pdfjsLib=lib;return lib;
-    });
-    return pdfJsPromise;
-  }
-  let pdfExportPromise=null;
-  async function getPdfExportLibs(){
-    if(window.jspdf?.jsPDF&&window.html2canvas)return {jsPDF:window.jspdf.jsPDF,html2canvas:window.html2canvas};
-    if(!pdfExportPromise){
-      pdfExportPromise=Promise.all([loadScript(JSPDF_URL),loadScript(HTML2CANVAS_URL)]).then(()=>({
-        jsPDF:window.jspdf.jsPDF,html2canvas:window.html2canvas
-      }));
-    }
-    return pdfExportPromise;
-  }
-
-  async function importPdfFile(file,handle=null){
-    if(!file||file.type!=="application/pdf"&&!file.name.toLowerCase().endsWith(".pdf")){toast("Please choose a PDF.");return}
-    pdfProgress.textContent="Reading PDF…";pdfProgress.classList.add("show");
-    try{
-      const pdfjs=await getPdfJs();const buf=await file.arrayBuffer();const pdf=await pdfjs.getDocument({data:buf}).promise;
-      let out="";
-      for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
-        pdfProgress.textContent=`Reading page ${pageNo} of ${pdf.numPages}…`;
-        const page=await pdf.getPage(pageNo);const content=await page.getTextContent();
-        const lines=[];let current="";
-        // PDF text items carry approximate x/y; a small y-change indicates a new line.
-        let lastY=null;
-        for(const item of content.items){
-          const str=(item.str||"").trim();if(!str)continue;
-          const y=item.transform?.[5]??0;
-          if(lastY!==null&&Math.abs(y-lastY)>5){if(current.trim())lines.push(current.trim());current=""}
-          current += (current && !current.endsWith(" ") ? " " : "") + str;lastY=y;
-        }
-        if(current.trim())lines.push(current.trim());
-        if(lines.length){
-          out+=`<h2>Page ${pageNo}</h2>`;
-          out+=lines.map(x=>`<p>${escapeHtml(x)}</p>`).join("");
-        }else out+=`<h2>Page ${pageNo}</h2><p></p>`;
-      }
-
-      saveNow();
-      currentId=uid();const base=file.name.replace(/\.pdf$/i,"")||"Imported PDF";
-      sourcePdfHandle=handle;sourcePdfFileName=file.name;currentDocumentWasImportedPdf=true;
-      files[currentId]={id:currentId,name:base,html:out,updatedAt:Date.now(),pdfImported:true,language:currentLanguage};
-      editor.innerHTML=out;fileNameInput.value=base;persist();placeCaretAtEnd();
-      updateReplaceState();toast(`Imported ${file.name}`);
-      pdfProgress.classList.remove("show");
-    }catch(err){
-      console.error(err);pdfProgress.classList.remove("show");toast("Could not read this PDF.");
-    }
-  }
-
-  function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
-
-  async function choosePdf(){
-    if(window.showOpenFilePicker){
-      try{
-        const [handle]=await window.showOpenFilePicker({
-          multiple:false,
-          excludeAcceptAllOption:true,
-          types:[{description:"PDF documents",accept:{"application/pdf":[".pdf"]}}]
-        });
-        const file=await handle.getFile();await importPdfFile(file,handle);return;
-      }catch(err){if(err?.name==="AbortError")return}
-    }
-    pdfInput.click();
-  }
-  pdfInput.addEventListener("change",async e=>{
-    const file=e.target.files?.[0];if(file)await importPdfFile(file,null);e.target.value="";
-  });
-  document.getElementById("importBtn").addEventListener("click",choosePdf);
-  document.getElementById("importBottomBtn").addEventListener("click",choosePdf);
-
-  function updateReplaceState(){
-    const possible=currentDocumentWasImportedPdf&&!!sourcePdfFileName;
-    replacePdfBtn.disabled=false;
-    replaceHelp.textContent=possible
-      ? `Original: ${sourcePdfFileName}. Direct replacement will be used when the browser provides file-write access; otherwise you will be asked where to save it.`
-      : "This document has no active imported-PDF file handle. Import a PDF first to use direct replacement.";
-  }
-
-  async function buildPdfBlob(){
-    const {jsPDF,html2canvas}=await getPdfExportLibs();
+  function serializeEditor(){
     const clone=editor.cloneNode(true);
-    clone.removeAttribute("contenteditable");
-    clone.style.cssText="background:#fff;color:#111;width:720px;padding:0;font-size:16px;line-height:1.55;font-family:Arial,sans-serif;";
-    clone.querySelectorAll("h1").forEach(e=>{e.style.fontSize="30px";e.style.margin="0 0 14px";});
-    clone.querySelectorAll("h2").forEach(e=>{e.style.fontSize="22px";e.style.margin="20px 0 10px";});
-    clone.querySelectorAll("h3").forEach(e=>{e.style.fontSize="18px";e.style.margin="16px 0 8px";});
-    const wrap=document.createElement("div");
-    wrap.style.cssText="position:fixed;left:-100000px;top:0;background:#fff;width:720px;padding:0;";
-    wrap.appendChild(clone);document.body.appendChild(wrap);
-
-    const doc=new jsPDF({unit:"mm",format:"a4",orientation:"portrait"});
-    await doc.html(clone,{
-      x:14,y:14,width:182,windowWidth:720,
-      html2canvas:{scale:1.4,useCORS:false,backgroundColor:"#ffffff"},
-      autoPaging:"text",
-      margin:[14,14,14,14]
-    });
-    document.body.removeChild(wrap);
-    return {blob:doc.output("blob"),doc};
+    clone.querySelectorAll(".voice-anchor").forEach(node=>node.remove());
+    return clone.innerHTML;
   }
 
-  async function downloadBlob(blob,name){
-    const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=name;a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),2000);
+  function removeVoiceAnchor(){
+    if(voiceAnchor && voiceAnchor.isConnected) voiceAnchor.remove();
+    voiceAnchor=null;
   }
 
-  async function replaceOriginalPdf(){
-    const clean=(fileNameInput.value.trim()||sourcePdfFileName.replace(/\.pdf$/i,"")||"Untitled").replace(/\.pdf$/i,"")+".pdf";
-    pdfProgress.textContent="Building edited PDF…";pdfProgress.classList.add("show");
-    try{
-      const {blob}=await buildPdfBlob();
+  function createVoiceAnchorFromRange(range){
+    removeVoiceAnchor();
 
-      // Best path: the handle obtained when the original PDF was imported.
-      if(sourcePdfHandle&&sourcePdfHandle.createWritable){
-        if(sourcePdfHandle.queryPermission){
-          const q=await sourcePdfHandle.queryPermission({mode:"readwrite"});
-          if(q!=="granted"&&sourcePdfHandle.requestPermission){
-            const r=await sourcePdfHandle.requestPermission({mode:"readwrite"});
-            if(r!=="granted")throw new Error("Write permission was not granted.");
-          }
-        }
-        const writable=await sourcePdfHandle.createWritable();await writable.write(blob);await writable.close();
-        toast("Original PDF replaced successfully");pdfProgress.classList.remove("show");pdfDialog.close();return;
+    const anchor=document.createElement("span");
+    anchor.className="voice-anchor";
+    anchor.setAttribute("aria-hidden","true");
+    anchor.setAttribute("contenteditable","false");
+    anchor.textContent="\u200B";
+
+    const r=range.cloneRange();
+    r.collapse(true);
+    r.insertNode(anchor);
+
+    voiceAnchor=anchor;
+    voiceTextOffset=getTextOffsetAtAnchor();
+  }
+
+  function getTextOffsetAtAnchor(){
+    if(!voiceAnchor||!voiceAnchor.isConnected)return voiceTextOffset||0;
+
+    let offset=0;
+    const walker=document.createTreeWalker(editor,NodeFilter.SHOW_TEXT);
+    while(walker.nextNode()){
+      const node=walker.currentNode;
+      if(voiceAnchor.parentNode===node){
+        return offset;
       }
-
-      // Fallback: ask the browser for a writable target. Suggested name is the current filename.
-      if(window.showSaveFilePicker){
-        const handle=await window.showSaveFilePicker({
-          suggestedName:clean,
-          types:[{description:"PDF document",accept:{"application/pdf":[".pdf"]}}]
-        });
-        const writable=await handle.createWritable();await writable.write(blob);await writable.close();
-        toast("PDF saved to the selected file");pdfProgress.classList.remove("show");pdfDialog.close();return;
-      }
-
-      // Last-resort browser download. The browser may append (1) if a same-name file exists.
-      await downloadBlob(blob,clean);
-      toast("Downloaded. This browser cannot overwrite local files directly.");
-      pdfProgress.classList.remove("show");pdfDialog.close();
-    }catch(err){
-      console.error(err);pdfProgress.classList.remove("show");
-      if(err?.name==="AbortError"){toast("Save cancelled.");return}
-      toast("Could not replace the PDF.");
+      const parent=node.parentNode;
+      if(parent && parent.contains(voiceAnchor)) continue;
+      offset += node.textContent?.length||0;
     }
+
+    // Fallback: recursively count all text before the anchor.
+    const before=document.createRange();
+    before.selectNodeContents(editor);
+    before.setEndBefore(voiceAnchor);
+    return before.toString().length;
   }
 
-  async function downloadNewPdf(){
-    const clean=(fileNameInput.value.trim()||"Untitled").replace(/\.pdf$/i,"")+".pdf";
-    pdfProgress.textContent="Building PDF…";pdfProgress.classList.add("show");
-    try{const {blob}=await buildPdfBlob();await downloadBlob(blob,clean);toast("PDF downloaded");pdfProgress.classList.remove("show");pdfDialog.close()}
-    catch(err){console.error(err);pdfProgress.classList.remove("show");toast("Could not create the PDF.")}
+  function restoreVoiceAnchor(){
+    if(voiceAnchor&&voiceAnchor.isConnected){
+      const r=document.createRange();
+      r.setStartBefore(voiceAnchor);
+      r.collapse(true);
+
+      const sel=window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      savedRange=r.cloneRange();
+      voiceTextOffset=getTextOffsetAtAnchor();
+      return true;
+    }
+
+    if(Number.isFinite(voiceTextOffset)&&voiceTextOffset>0){
+      return restoreCaretFromTextOffset(voiceTextOffset);
+    }
+
+    return false;
   }
 
-  document.getElementById("pdfBtn").addEventListener("click",()=>{
-    saveNow();updateReplaceState();pdfDialog.showModal();
-  });
-  document.getElementById("downloadPdfBtn").addEventListener("click",downloadNewPdf);
-  replacePdfBtn.addEventListener("click",replaceOriginalPdf);
-  document.getElementById("closePdf").addEventListener("click",()=>pdfDialog.close());
+  function restoreCaretFromTextOffset(target){
+    const desired=Math.max(0,Number(target)||0);
+    const walker=document.createTreeWalker(editor,NodeFilter.SHOW_TEXT);
+    let offset=0;
 
-  // Voice typing
-  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-  function initRecognition(){
-    if(!SpeechRecognition){toast("Use Chrome on Android for voice typing.");return false}
-    recognition=new SpeechRecognition();recognition.continuous=true;recognition.interimResults=true;recognition.lang=currentLanguage==="hi"?"hi-IN":"en-IN";
-    recognition.onstart=()=>{isListening=true;voiceBtn.classList.add("listening");voiceBtn.textContent="⏹️";status("Listening…")};
-    recognition.onresult=event=>{
-      for(let i=event.resultIndex;i<event.results.length;i++){
-        const result=event.results[i];if(!result.isFinal)continue;let text=result[0].transcript.trim();if(!text)continue;
-        text=text.replace(/\bnew paragraph\b/gi,"\n\n").replace(/\bfull stop\b/gi,".").replace(/\bquestion mark\b/gi,"?")
-          .replace(/\bcomma\b/gi,",").replace(/\bcolon\b/gi,":");
-        text=sanitizeForLanguage(text);
-        if(currentLanguage==="hinglish") text=text.replace(/\s{2,}/g," ").trim();
-        const lead=/^[\n.,?:]/.test(text)?"":text==="."||text===","||text==="?"||text===":"?"":" ";
-        insertTextAtCursor(text.startsWith("\n")||/^[.,?:]/.test(text)?text:text+" ");
+    while(walker.nextNode()){
+      const node=walker.currentNode;
+      const len=node.textContent?.length||0;
+
+      if(offset+len>=desired){
+        const r=document.createRange();
+        r.setStart(node,Math.min(desired-offset,len));
+        r.collapse(true);
+        createVoiceAnchorFromRange(r);
+
+        const sel=window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(r);
+        savedRange=r.cloneRange();
+        return true;
       }
-    };
-    recognition.onerror=e=>{if(e.error==="not-allowed"||e.error==="service-not-allowed")toast("Allow microphone access in Chrome.");else if(e.error!=="aborted")toast("Voice error: "+e.error)};
-    recognition.onend=()=>{isListening=false;voiceBtn.classList.remove("listening");voiceBtn.textContent="🎙️";if(statusEl.textContent==="Listening…")status("Saved")};
+
+      offset+=len;
+    }
+
+    placeCaretAtEnd();
     return true;
   }
-  voiceBtn.addEventListener("click",()=>{
-    if(!SpeechRecognition){toast("Voice typing needs Chrome's speech recognition.");return}
-    if(!recognition&&!initRecognition())return;
-    if(isListening){recognition.stop();saveNow();return}
-    if(recognition){try{recognition.stop();}catch{}recognition=null;}
-    if(!initRecognition())return;
-    saveSelection();if(!savedRange)placeCaretAtEnd();
-    try{recognition.start()}catch{try{recognition.stop()}catch{}setTimeout(()=>{try{recognition.start()}catch{toast("Could not start voice typing.")}},150)}
-  });
 
-  document.addEventListener("selectionchange",()=>{if(selectionInsideEditor())saveSelection()});
-  window.addEventListener("beforeunload",saveNow);
-  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")saveNow()});
+  function updateVoiceAnchorFromSelection(){
+    if(isListening)return;
 
-  init();
-  applyLanguageMode();
-})();
-</script>
-</body>
-</html>
+    const sel=window.getSelection();
+    if(!sel||!sel.rangeCount||!editor.contains(sel.anchorNode))return;
+
+    const r=sel.getRangeAt(0).cloneRange();
+    r.collapse(true);
+
+    if(voiceAnchor && (
+      r.startContainer===voiceAnchor ||
+      voiceAnchor.contains(r.startContainer)
+    )){
+      return;
+    }
+
+    savedRange=r.cloneRange();
+    createVoiceAnchorFromRange(r);
+  }
+
+  function selectionInsideEditor(){
+    const sel=window.getSelection();if(!sel||!sel.rangeCount)return false;
+    return
